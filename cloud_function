@@ -1,0 +1,98 @@
+import os
+import json
+from google.cloud import bigquery
+from google.cloud import storage
+
+PROJECT_ID = 'nest-auth-407906'
+BQ_DATASET = 'demo'
+GCS_BUCKET = 'akash0109'
+
+BQ = bigquery.Client()
+CS = storage.Client()
+
+def load_json_to_bigquery(data, context):
+    if 'name' in data:
+        file_name = data['name']
+        if file_name.endswith('.json'):
+            # Get information about the uploaded file
+            bucket_name = data['bucket']
+            file_path = f'gs://{bucket_name}/{file_name}'
+
+            # Extract table name from the file name (remove file extension)
+            table_name = os.path.splitext(os.path.basename(file_name))[0]
+            if len(table_name) > 15:
+                table_name=table_name[:10]
+
+                # Define the BigQuery table ID
+                table_id = f'{PROJECT_ID}.{BQ_DATASET}.{table_name}'
+
+                # Load JSON data into BigQuery with auto schema detection
+                load_job_config = bigquery.LoadJobConfig(
+                    source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                    autodetect=True  # Enable schema auto-detection
+                )
+
+                load_job = BQ.load_table_from_uri(
+                    file_path,
+                    table_id,
+                    job_config=load_job_config
+                )
+
+                load_job.result()  # Waits for the job to complete
+            else:
+                table_id = f'{PROJECT_ID}.{BQ_DATASET}.{table_name}'
+
+                # Load JSON data into BigQuery with auto schema detection
+                load_job_config = bigquery.LoadJobConfig(
+                    source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                    autodetect=True  # Enable schema auto-detection
+                )
+
+                load_job = BQ.load_table_from_uri(
+                    file_path,
+                    table_id,
+                    job_config=load_job_config
+                )
+
+                load_job.result()              
+
+  
+    elif 'prefix' in data:
+        # If the event is for a folder (prefix), list all files inside the folder
+        bucket_name = data['bucket']
+        prefix = data['prefix']
+        blobs = CS.list_blobs(bucket_name, prefix=prefix)
+        for blob in blobs:
+            if blob.name.endswith('.json'):
+                # Call the function recursively for each JSON file inside the folder
+                new_data = {'bucket': bucket_name, 'name': blob.name}
+                load_json_to_bigquery(new_data, context)
+
+# If you want to handle multiple files in a Cloud Storage bucket,
+# you can use Cloud Storage triggers and process each file individually.
+# For example, the following code can be added to the same script:
+
+def process_gcs_event(data, context):
+    if 'name' in data:
+        file_name = data['name']
+        if file_name.endswith('.json'):
+            # Call the load_json_to_bigquery function for each JSON file
+            load_json_to_bigquery(data, context)
+    elif 'prefix' in data:
+        # If the event is for a folder (prefix), list all files inside the folder
+        bucket_name = data['bucket']
+        prefix = data['prefix']
+        blobs = CS.list_blobs(bucket_name, prefix=prefix)
+        for blob in blobs:
+            if blob.name.endswith('.json'):
+                # Call the load_json_to_bigquery function for each JSON file inside the folder
+                new_data = {'bucket': bucket_name, 'name': blob.name}
+                load_json_to_bigquery(new_data, context)
+
+# Note: Don't forget to deploy your Cloud Function and set up the necessary triggers.
+
+# To deploy the function, you can use the following command in the directory where your script is located:
+# gcloud functions deploy your-function-name \
+#     --runtime python310 \
+#     --trigger-resource your-cloud-storage-bucket \
+#     --trigger-event google.storage.object.finalize
